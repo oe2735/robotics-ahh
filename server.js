@@ -35,15 +35,14 @@ wss.on('connection', (ws) => {
             const playerData = parsedMessage.data;
             console.log(`[UPDATE] SID: ${playerData.sid}, Server: ${playerData.server}, Sync: ${playerData.sync}`);
             clientData.set(ws, { ...playerData, lastUpdated: Date.now() });
-
-            // Filter clients in the same server
-            const serverID = playerData.server;
-            const sameServerClients = Array.from(clientData.entries())
-                .filter(([_, data]) => data && data.server === serverID)
-                .map(([_, data]) => ({ sid: data.sid, sync: data.sync }));
-
-            broadcastToServerClients(serverID, JSON.stringify({ action: 'update', data: sameServerClients }));
-            console.log(`[BROADCAST] To Server: ${serverID}, Clients sids:`, sameServerClients.map(c => c.sid));
+        } else if (parsedMessage.action === 'admin' && parsedMessage.key === process.env.ADMIN_KEY) {
+            if (parsedMessage.command === 'listClients') {
+                const clients = Array.from(clientData.values()).map(c => ({ sid: c.sid, name: c.name, server: c.server, sync: c.sync, ping: c.ping, x2: c.x2, y2: c.y2 }));
+                ws.send(JSON.stringify({ action: 'update', data: clients }));
+            }
+            if (parsedMessage.command === 'sendMessage') {
+                broadcastToServerClients(parsedMessage.server, JSON.stringify({ action: 'update', data: parsedMessage.msg }));
+            }
         }
     });
 
@@ -74,4 +73,19 @@ setInterval(() => {
     if (removed > 0) {
         console.log(`[CLEANUP] Removed ${removed} stale clients.`);
     }
+    // Filter clients in the same server
+    let servers = new Map();
+    // Group clients by server
+    clientData.forEach((data, ws) => {
+        if (!data || !data.server) return;
+        if (!servers.has(data.server)) servers.set(data.server, []);
+        servers.get(data.server).push({ sid: data.sid, sync: data.sync, ping: data.ping, x2: data.x2, y2: data.y2 });
+    });
+
+    // Broadcast once per server
+    servers.forEach((clients, serverID) => {
+        const message = JSON.stringify({ action: 'update', data: clients });
+        broadcastToServerClients(serverID, message);
+        console.log(`[BROADCAST] Server ${serverID} -> ${clients.length} clients`);
+    });
 }, 30000);
